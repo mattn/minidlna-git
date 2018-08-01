@@ -324,6 +324,16 @@ monitor_remove_file(const char * path)
 		sql_exec(db, "DELETE from OBJECTS where DETAIL_ID = %lld", detailID);
 	}
 	snprintf(art_cache, sizeof(art_cache), "%s/art_cache%s", db_path, path);
+
+#ifdef THUMBNAIL_CREATION
+        /* Remove video thumbnails */
+        if ( is_video(path) )
+        {
+                char *vthumb = art_cache;
+                strcpy(strchr(vthumb, '\0')-4, ".jpg");
+        }
+#endif
+
 	remove(art_cache);
 
 	return 0;
@@ -622,6 +632,10 @@ start_inotify(void)
 	char * esc_name = NULL;
 	struct stat st;
 	sigset_t set;
+#ifdef THUMBNAIL_CREATION
+        char renpath_buf[PATH_MAX];
+        int cookie = 0;
+#endif
 
 	sigfillset(&set);
 	sigdelset(&set, SIGCHLD);
@@ -696,6 +710,16 @@ start_inotify(void)
 				{
 					DPRINTF(E_DEBUG, L_INOTIFY,  "The directory %s was %s.\n",
 						path_buf, (event->mask & IN_MOVED_TO ? "moved here" : "created"));
+#ifdef THUMBNAIL_CREATION
+                                        /* We do not want to regenerate the thumbnails if e rename a directory.
+                                           We should keep at least four cookies/olddir since IN_MOVED_FROM/IN_MOVED_TO may
+                                           not arrive in sequence, but one should cover most cases */
+                                        if (event->cookie == cookie && event->mask & IN_MOVED_TO)
+                                        {
+                                                DPRINTF(E_DEBUG, L_INOTIFY, "Directory rename: %s -> %s \n", renpath_buf, path_buf);
+                                                rename_artcache_dir(renpath_buf, path_buf);
+                                        }
+#endif
 					monitor_insert_directory(pollfds[0].fd, esc_name, path_buf);
 				}
 				else if ( (event->mask & (IN_CLOSE_WRITE|IN_MOVED_TO|IN_CREATE)) &&
@@ -728,7 +752,18 @@ start_inotify(void)
 						(event->mask & IN_ISDIR ? "directory" : "file"),
 						path_buf, (event->mask & IN_MOVED_FROM ? "moved away" : "deleted"));
 					if ( event->mask & IN_ISDIR )
+#ifdef THUMBNAIL_CREATION
+                                        {
+                                                if ( event->mask & IN_MOVED_FROM ) 
+                                                {
+                                                        strncpy(renpath_buf, path_buf, sizeof(renpath_buf));    
+                                                        cookie = event->cookie;
+                                                }
+#endif
 						monitor_remove_directory(pollfds[0].fd, path_buf);
+#ifdef THUMBNAIL_CREATION
+                                        }
+#endif
 					else
 						monitor_remove_file(path_buf);
 				}

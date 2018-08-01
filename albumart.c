@@ -32,6 +32,10 @@
 
 #include <jpeglib.h>
 
+#ifdef THUMBNAIL_CREATION
+#include <libffmpegthumbnailer/videothumbnailerc.h>
+#endif
+
 #include "upnpglobalvars.h"
 #include "albumart.h"
 #include "sql.h"
@@ -67,15 +71,18 @@ save_resized_album_art(image_s *imsrc, const char *path)
 	strncpyt(cache_dir, cache_file, sizeof(cache_dir));
 	make_dir(dirname(cache_dir), S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
 
+	if( runtime_vars.cover_size <= 0 )
+		return image_save_to_jpeg_file(imsrc, cache_file);
+
 	if( imsrc->width > imsrc->height )
 	{
-		dstw = 160;
-		dsth = (imsrc->height<<8) / ((imsrc->width<<8)/160);
+		dstw = runtime_vars.cover_size;
+		dsth = (imsrc->height<<8) / ((imsrc->width<<8) / runtime_vars.cover_size);
 	}
 	else
 	{
-		dstw = (imsrc->width<<8) / ((imsrc->height<<8)/160);
-		dsth = 160;
+		dstw = (imsrc->width<<8) / ((imsrc->height<<8) / runtime_vars.cover_size);
+		dsth = runtime_vars.cover_size;
 	}
 	imdst = image_resize(imsrc, dstw, dsth);
 	if( !imdst )
@@ -216,7 +223,8 @@ check_embedded_art(const char *path, uint8_t *image_data, int image_size)
 	width = imsrc->width;
 	height = imsrc->height;
 
-	if( width > 160 || height > 160 )
+	if( runtime_vars.cover_size > 0 &&
+		( width > runtime_vars.cover_size || height > runtime_vars.cover_size ) )
 	{
 		art_path = save_resized_album_art(imsrc, path);
 	}
@@ -337,7 +345,8 @@ existing_file:
 found_file:
 			width = imsrc->width;
 			height = imsrc->height;
-			if( width > 160 || height > 160 )
+			if( runtime_vars.cover_size > 0 && 
+				( width > runtime_vars.cover_size || height > runtime_vars.cover_size ) )
 				art_file = save_resized_album_art(imsrc, file);
 			else
 				art_file = strdup(file);
@@ -348,15 +357,69 @@ found_file:
 	return NULL;
 }
 
+#ifdef THUMBNAIL_CREATION
+char *
+generate_thumbnail(const char * path)
+{
+       char *tfile = NULL;
+       video_thumbnailer *vt = NULL;
+       char cache_dir[MAXPATHLEN];
+
+       if( art_cache_exists(path, &tfile) )
+               return tfile;
+
+       if ( is_video(path) )
+       {
+
+               vt = video_thumbnailer_create();
+               if ( !vt )
+               {
+                       free(tfile);
+                       return 0;
+               }
+               vt->thumbnail_image_type = Jpeg;
+               vt->thumbnail_image_quality = runtime_vars.thumb_quality;
+               vt->thumbnail_size = runtime_vars.thumb_width;
+               vt->seek_percentage = 20;
+               vt->overlay_film_strip = (GETFLAG(THUMB_FILMSTRIP))?1:0;
+
+               DPRINTF(E_DEBUG, L_METADATA, "generating thumbnail: %s\n", path);
+
+               strncpyt(cache_dir, tfile, sizeof(cache_dir));
+               if ( make_dir(dirname(cache_dir), S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH) ||
+                       video_thumbnailer_generate_thumbnail_to_file(vt, path, tfile) )
+               {
+                       free(tfile);
+                       video_thumbnailer_destroy(vt);
+                       return 0;
+               }
+
+               video_thumbnailer_destroy(vt);
+               return tfile;
+       }
+       return 0;
+}
+#endif
+
 int64_t
 find_album_art(const char *path, uint8_t *image_data, int image_size)
 {
 	char *album_art = NULL;
 	int64_t ret = 0;
 
-	if( (image_size && (album_art = check_embedded_art(path, image_data, image_size))) ||
-	    (album_art = check_for_album_file(path)) )
-	{
+        if(image_size)
+                album_art = check_embedded_art(path, image_data, image_size);
+
+        if(!album_art)
+                album_art = check_for_album_file(path);
+
+#ifdef THUMBNAIL_CREATION
+        if(!album_art && GETFLAG(THUMB_MASK))
+                album_art = generate_thumbnail(path);
+#endif
+
+        if(album_art)
+        {
 		ret = sql_get_int_field(db, "SELECT ID from ALBUM_ART where PATH = '%q'", album_art);
 		if( !ret )
 		{

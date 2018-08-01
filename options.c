@@ -68,6 +68,13 @@ static const struct {
 	{ WIDE_LINKS, "wide_links" },
 	{ TIVO_DISCOVERY, "tivo_discovery" },
 	{ ENABLE_SUBTITLES, "enable_subtitles" },
+	{ RESIZE_COVER_ART, "resize_covers" },
+#ifdef THUMBNAIL_CREATION
+        { ENABLE_THUMB, "enable_thumbnail" },
+        { THUMB_WIDTH, "thumbnail_width" },
+        { THUMB_QUALITY, "thumbnail_quality" },
+        { ENABLE_THUMB_FILMSTRIP, "enable_thumbnail_filmstrip" }
+#endif
 };
 
 int
